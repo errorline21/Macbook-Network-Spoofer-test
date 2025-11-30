@@ -1,294 +1,392 @@
 #!/bin/zsh
 
-# ============================================================
-#   MAC SPOOFER – HYBRID NETWORK SUITE
-#   Created by: dimension53  (Discord)
-#   Installer Version: 2.0
-# ============================================================
+set -e
 
-INSTALL_DIR="$HOME/macspoof"
-SCRIPT_DIR="$INSTALL_DIR/scripts"
-CONFIG_FILE="$INSTALL_DIR/config"
+CONFIG_DIR="$HOME/.macspoof"
+SCRIPTS_DIR="$CONFIG_DIR/scripts"
+CONFIG_FILE="$CONFIG_DIR/config"
 
-mkdir -p "$SCRIPT_DIR"
+# ---------- Basic colors ----------
+RESET="\033[0m"
+BOLD="\033[1m"
+RED="\033[31m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+BLUE="\033[34m"
+MAGENTA="\033[35m"
+CYAN="\033[36m"
 
-
-# ------------------------------------------------------------
-# *** CHECK TERMINAL COLOR SUPPORT ***
-# ------------------------------------------------------------
-supports_256_colors() {
-  if command -v tput >/dev/null 2>&1; then
-    cols=$(tput colors 2>/dev/null || echo 0)
-    [ "$cols" -ge 256 ]
-  else
-    return 1
-  fi
-}
-
-# Discord credit render function
+# ---------- Gradient credit for Dimension53 ----------
+# ---------- Simple rainbow credit (each letter colored) ----------
 render_discord_credit() {
-  if supports_256_colors; then
-    # rainbow
-    local text="dimension53"
-    local colors=(196 202 208 214 220 154 82 46 51 33 27 93)
-    local out=""
-    local i=1
-    for (( idx=1; idx<=${#text}; idx++ )); do
-      local ch="${text:idx-1:1}"
-      local color="${colors[$i]}"
-      out+="%{\e[38;5;${color}m%}${ch}%{\e[0m%}"
-      (( i++ ))
-      if (( i > ${#colors[@]} )); then i=1; fi
-    done
-    echo "$out"
-  else
-    # fallback static green
-    echo "%{\e[32m%}dimension53%{\e[0m%}"
-  fi
-}
+  local R1="\033[31m"   # red
+  local R2="\033[33m"   # yellow
+  local R3="\033[32m"   # green
+  local R4="\033[36m"   # cyan
+  local R5="\033[34m"   # blue
+  local R6="\033[35m"   # magenta
+  local RESET="\033[0m"
 
-DISCORD_CREDIT=$(render_discord_credit)
+  # D i m e n s i o n 5 3
+  printf "        Created by: "
+  printf "%bD%b" "$R1" "$RESET"
+  printf "%bi%b" "$R2" "$RESET"
+  printf "%bm%b" "$R3" "$RESET"
+  printf "%be%b" "$R4" "$RESET"
+  printf "%bn%b" "$R5" "$RESET"
+  printf "%bs%b" "$R6" "$RESET"
+  printf "%bi%b" "$R1" "$RESET"
+  printf "%bo%b" "$R2" "$RESET"
+  printf "%bn%b" "$R3" "$RESET"
+  printf "%b5%b" "$R4" "$RESET"
+  printf "%b3%b\n" "$R5" "$RESET"
 
-
-# ------------------------------------------------------------
-# *** TITLE BANNER ***
-# ------------------------------------------------------------
-print_banner() {
-  print ""
-  print "================= MAC SPOOF HELPER INSTALLER ================="
-  print ""
-  print "        Created by: $DISCORD_CREDIT"
-  print ""
-  print "=============================================================="
-  print ""
+  printf "        (Discord: dimension53)\n"
 }
 
 
-print_banner
 
 
-# ------------------------------------------------------------
-# *** FIND NETWORK INTERFACES ***
-# ------------------------------------------------------------
-echo "[INFO] Scanning network interfaces (enX)..."
-echo ""
+# ---------- Header ----------
+print_header() {
+  printf "%b\n" "${CYAN}================= MAC SPOOF HELPER INSTALLER =================${RESET}"
+  printf "\n"
+  render_discord_credit
+  printf "\n%b\n" "${CYAN}==============================================================${RESET}"
+  printf "\n"
+}
 
-for iface in $(networksetup -listallhardwareports | awk '/Device/ {print $2}'); do
-    mac=$(ifconfig "$iface" 2>/dev/null | awk '/ether/ {print $2}')
-    if [ -n "$mac" ]; then
-        printf "  - %-4s (MAC: %s)\n" "$iface" "$mac"
-    fi
-done
 
-echo ""
-echo "Note: en0 (Wi-Fi) may NOT spoof on modern macOS."
-echo "      USB / Ethernet (en3, en4…) work best."
-echo ""
 
-read "INTERFACE?Enter the interface you want to use (default: en3): "
-INTERFACE=${INTERFACE:-en3}
+# ---------- Get MAC for interface ----------
+get_mac_for_iface() {
+  local iface="$1"
+  ifconfig "$iface" 2>/dev/null | awk '/ether/{print $2; exit}'
+}
 
-ORIG=$(ifconfig "$INTERFACE" | awk '/ether/ {print $2}')
+# ---------- Prompt for interface and MAC ----------
+prompt_for_config() {
+  echo "${CYAN}[INFO] Scanning network interfaces (enX)...${RESET}"
+  echo
 
-if [ -z "$ORIG" ]; then
-    echo "[ERROR] Could not read MAC for interface $INTERFACE."
+  # List en* style interfaces
+  for dev in $(ifconfig -l | tr ' ' '\n' | grep '^en'); do
+    local mac="$(get_mac_for_iface "$dev")"
+    [[ -n "$mac" ]] && printf "  - %s  (MAC: %s)\n" "$dev" "$mac"
+  done
+
+  echo
+  echo "Note: ${YELLOW}en0 (Wi-Fi) may NOT spoof on modern macOS.${RESET}"
+  echo "      USB / Ethernet (e.g., en3, en4…) usually work better."
+  echo
+
+  local default_iface="en3"
+  printf "\nEnter the interface you want to use (default: %s): " "$default_iface"
+  read -r IFACE
+  [[ -z "$IFACE" ]] && IFACE="$default_iface"
+
+  local current_mac
+  current_mac="$(get_mac_for_iface "$IFACE")"
+
+  if [[ -z "$current_mac" ]]; then
+    printf "%b[ERROR]%b Could not read MAC for interface %s.\n" "$RED" "$RESET" "$IFACE"
     exit 1
+  fi
+
+  current_mac_upper="${(U)current_mac}"
+
+  echo
+  printf "Detected current MAC on %s: %s\n" "$IFACE" "$current_mac_upper"
+  echo
+  printf "Enter the FIXED custom MAC you want (format XX:XX:XX:XX:XX:XX): "
+  read -r fixed_mac_raw
+
+  # Normalize
+  fixed_mac_upper="${(U)fixed_mac_raw}"
+
+  echo
+  echo "Interface      : $IFACE"
+  echo "Original MAC   : $current_mac_upper"
+  echo "Fixed spoof MAC: $fixed_mac_upper"
+  echo
+  printf "Is this correct? (y/n): "
+  read -r confirm
+
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 1
+  fi
+
+  IFACE_CHOSEN="$IFACE"
+  ORIGINAL_MAC="$current_mac_upper"
+  FIXED_MAC="$fixed_mac_upper"
+}
+
+# ---------- Write config ----------
+write_config() {
+  mkdir -p "$CONFIG_DIR"
+  cat > "$CONFIG_FILE" <<EOF
+# macspoof config
+IFACE="$IFACE_CHOSEN"
+ORIGINAL_MAC="$ORIGINAL_MAC"
+FIXED_MAC="$FIXED_MAC"
+EOF
+
+  printf "\n%b[OK]%b Config saved to: %s\n" "$GREEN" "$RESET" "$CONFIG_FILE"
+}
+
+# ---------- Generate helper scripts ----------
+write_scripts() {
+  mkdir -p "$SCRIPTS_DIR"
+
+  # Common header used by all helper scripts
+  local COMMON='#!/bin/zsh
+CONFIG_FILE="$HOME/.macspoof/config"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "[ERROR] Config not found at $CONFIG_FILE"
+  exit 1
 fi
+source "$CONFIG_FILE"
+if [[ -z "$IFACE" || -z "$ORIGINAL_MAC" || -z "$FIXED_MAC" ]]; then
+  echo "[ERROR] Config missing IFACE/ORIGINAL_MAC/FIXED_MAC"
+  exit 1
+fi
+CURRENT_MAC_RAW=$(ifconfig "$IFACE" 2>/dev/null | awk '\''/ether/{print $2; exit}'\'')
+CURRENT_MAC=${CURRENT_MAC_RAW:u}
+ORIG=${ORIGINAL_MAC:u}
+FIX=${FIXED_MAC:u}
+RESET="\033[0m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+CYAN="\033[36m"
+RED="\033[31m"
+'
 
-echo ""
-echo "Detected current MAC on $INTERFACE: $ORIG"
-echo ""
-
-# ------------------------------------------------------------
-# *** ENTER FIXED MAC ***
-# ------------------------------------------------------------
-read "FIXED?Enter the FIXED custom MAC you want (format XX:XX:XX:XX:XX:XX): "
-
-FIXED=$(echo "$FIXED" | tr '[:lower:]' '[:upper:]')
-
-echo ""
-echo "Interface      : $INTERFACE"
-echo "Original MAC   : $ORIG"
-echo "Fixed spoof MAC: $FIXED"
-echo ""
-
-read "CONFIRM?Is this correct? (y/n): "
-[[ "$CONFIRM" != "y" ]] && { echo "Aborted."; exit 1; }
-
-# Save config
-mkdir -p "$INSTALL_DIR"
-cat <<EOF > "$CONFIG_FILE"
-INTERFACE="$INTERFACE"
-ORIGINAL="$ORIG"
-FIXED="$FIXED"
-EOF
-
-echo ""
-echo "[OK] Config saved to: $CONFIG_FILE"
-echo ""
-
-
-# ------------------------------------------------------------
-# *** CREATE COMMAND SCRIPTS ***
-# ------------------------------------------------------------
-
-# SetLoadedAddress
-cat <<'EOF' > "$SCRIPT_DIR/SetLoadedAddress.sh"
-#!/bin/zsh
-source "$HOME/macspoof/config"
-echo "Bringing ${INTERFACE} up..."
-sudo ifconfig "$INTERFACE" down
-sudo ifconfig "$INTERFACE" ether "$FIXED"
-sudo ifconfig "$INTERFACE" up
-"$HOME/macspoof/scripts/ShowMacAddress.sh"
-EOF
-chmod +x "$SCRIPT_DIR/SetLoadedAddress.sh"
-
-
-
-# RandomizeMacAddress
-cat <<'EOF' > "$SCRIPT_DIR/RandomizeMacAddress.sh"
-#!/bin/zsh
-source "$HOME/macspoof/config"
-
-# Generate locally-administered MAC
-OUI=$(printf '%02X:%02X:%02X' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
-LAST=$(printf '%02X:%02X:%02X' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
-
-RAND="$OUI:$LAST"
-
-echo "Bringing ${INTERFACE} up..."
-sudo ifconfig "$INTERFACE" down
-sudo ifconfig "$INTERFACE" ether "$RAND"
-sudo ifconfig "$INTERFACE" up
-"$HOME/macspoof/scripts/ShowMacAddress.sh"
-EOF
-chmod +x "$SCRIPT_DIR/RandomizeMacAddress.sh"
-
-
-
-# RevertMacAddress
-cat <<'EOF' > "$SCRIPT_DIR/RevertMacAddress.sh"
-#!/bin/zsh
-source "$HOME/macspoof/config"
-echo "Reverting MAC on ${INTERFACE} to ${ORIGINAL}..."
-sudo ifconfig "$INTERFACE" down
-sudo ifconfig "$INTERFACE" ether "$ORIGINAL"
-sudo ifconfig "$INTERFACE" up
-"$HOME/macspoof/scripts/ShowMacAddress.sh"
-EOF
-chmod +x "$SCRIPT_DIR/RevertMacAddress.sh"
-
-
-
-# ShowMacAddress
-cat <<'EOF' > "$SCRIPT_DIR/ShowMacAddress.sh"
-#!/bin/zsh
-source "$HOME/macspoof/config"
-CUR=$(ifconfig "$INTERFACE" | awk '/ether/ {print $2}')
-echo "
-==================== MAC STATUS =====================
-
-  Interface        : $INTERFACE
-  Current MAC      : $CUR
-  Original MAC     : $ORIGINAL
-
-"
-if [[ "$CUR" == "$ORIGINAL" ]]; then
-    echo "  Status: MATCH → Using ORIGINAL hardware MAC"
+  # ShowMacAddress
+  cat > "$SCRIPTS_DIR/ShowMacAddress.sh" <<EOF
+$COMMON
+echo
+printf "%b\n" "\${CYAN}==================== MAC STATUS =====================\${RESET}"
+echo
+echo "  Interface        : \$IFACE"
+echo "  Current MAC      : \${CURRENT_MAC:-UNKNOWN}"
+echo "  Original MAC     : \${ORIG:-UNKNOWN}"
+echo
+if [[ -n "\$CURRENT_MAC" && "\$CURRENT_MAC" = "\$ORIG" ]]; then
+  printf "%b\n" "\${GREEN}  Status: MATCH → Using ORIGINAL hardware MAC\${RESET}"
 else
-    echo "  Status: DIFFERENT → Using SPOOFED MAC"
+  printf "%b\n" "\${YELLOW}  Status: DIFFERENT → Using SPOOFED MAC\${RESET}"
 fi
-echo "
-======================================================
-"
+echo
+printf "%b\n" "\${CYAN}======================================================\${RESET}"
+echo
 EOF
-chmod +x "$SCRIPT_DIR/ShowMacAddress.sh"
 
-
-
-# spoofhelp
-cat <<EOF > "$SCRIPT_DIR/spoofhelp.sh"
-#!/bin/zsh
-echo ""
-echo "==================== SPOOF HELPER ====================="
-echo ""
-echo "  Active interface : $INTERFACE"
-echo ""
-echo "  Created by: $DISCORD_CREDIT"
-echo ""
-echo "  Available commands:"
-echo ""
-echo "    SetLoadedAddress     - Apply your fixed MAC"
-echo "    RandomizeMacAddress  - Apply random locally-administered MAC"
-echo "    RevertMacAddress     - Restore hardware MAC"
-echo "    ShowMacAddress       - Show current vs original MAC"
-echo ""
-echo "    spoofhelp            - Show this help menu"
-echo "    cleanspoofer         - Remove all spoof helper files"
-echo ""
-echo "=========================================================="
+  # SetLoadedAddress (apply fixed MAC)
+  cat > "$SCRIPTS_DIR/SetLoadedAddress.sh" <<EOF
+$COMMON
+echo "Bringing \$IFACE up..."
+sudo ifconfig "\$IFACE" up 2>/dev/null || true
+echo "Setting MAC on \$IFACE to \$FIX ..."
+sudo ifconfig "\$IFACE" ether "\$FIX" || {
+  echo "[ERROR] Failed to set MAC on \$IFACE"
+  exit 1
+}
+"\$HOME/.macspoof/scripts/ShowMacAddress.sh"
 EOF
-chmod +x "$SCRIPT_DIR/spoofhelp.sh"
 
-
-
-# cleanspoofer
-cat <<'EOF' > "$SCRIPT_DIR/cleanspoofer.sh"
+  # RandomizeMacAddress (random, locally-administered MAC)
+  cat > "$SCRIPTS_DIR/RandomizeMacAddress.sh" <<'EOF'
 #!/bin/zsh
-source "$HOME/macspoof/config"
+CONFIG_FILE="$HOME/.macspoof/config"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "[ERROR] Config not found at $CONFIG_FILE"
+  exit 1
+fi
+source "$CONFIG_FILE"
+CURRENT_MAC_RAW=$(ifconfig "$IFACE" 2>/dev/null | awk '/ether/{print $2; exit}')
+CURRENT_MAC=${CURRENT_MAC_RAW:u}
+RESET="\033[0m"
+CYAN="\033[36m"
 
-echo "
-============ CLEAN SPOOFER UTILITY ============
-"
+# Random MAC generator (locally-administered, unicast)
+rand_byte() {
+  printf "%02X" $(( RANDOM % 256 ))
+}
+
+b1=$(rand_byte)
+b2=$(rand_byte)
+b3=$(rand_byte)
+b4=$(rand_byte)
+b5=$(rand_byte)
+b6=$(rand_byte)
+
+# Make first byte locally-administered (bit1=1) and unicast (bit0=0)
+first_dec=$(( 0x$b1 ))
+first_dec=$(( (first_dec | 0x02) & 0xFE ))
+printf -v b1 "%02X" "$first_dec"
+
+RAND_MAC="$b1:$b2:$b3:$b4:$b5:$b6"
+
+echo "Bringing $IFACE up..."
+sudo ifconfig "$IFACE" up 2>/dev/null || true
+
+echo "Setting RANDOM MAC on $IFACE to $RAND_MAC ..."
+sudo ifconfig "$IFACE" ether "$RAND_MAC" || {
+  echo "[ERROR] Failed to set random MAC on $IFACE"
+  exit 1
+}
+"$HOME/.macspoof/scripts/ShowMacAddress.sh"
+EOF
+
+  # RevertMacAddress (restore hardware MAC)
+  cat > "$SCRIPTS_DIR/RevertMacAddress.sh" <<EOF
+$COMMON
+echo "Bringing \$IFACE up..."
+sudo ifconfig "\$IFACE" up 2>/dev/null || true
+echo "Reverting MAC on \$IFACE to \$ORIG ..."
+sudo ifconfig "\$IFACE" ether "\$ORIG" || {
+  echo "[ERROR] Failed to revert MAC on \$IFACE"
+  exit 1
+}
+"\$HOME/.macspoof/scripts/ShowMacAddress.sh"
+EOF
+
+  # spoofhelp (pretty UI)
+  cat > "$SCRIPTS_DIR/spoofhelp.sh" <<'EOF'
+#!/bin/zsh
+CONFIG_FILE="$HOME/.macspoof/config"
+if [[ -f "$CONFIG_FILE" ]]; then
+  source "$CONFIG_FILE"
+fi
+RESET="\033[0m"
+CYAN="\033[36m"
+GREEN="\033[32m"
+MAGENTA="\033[35m"
+YELLOW="\033[33m"
+
+echo
+printf "%b\n" "${CYAN}==================== SPOOF HELPER =====================${RESET}"
+echo
+printf "  Active interface : %b%s%b\n" "$GREEN" "${IFACE:-unknown}" "$RESET"
+echo
+printf "%b" "${MAGENTA}  Created by: ${RESET}"
+echo "Dimension53 (Discord: dimension53)"
+echo
+printf "%b\n" "${CYAN}  Commands:${RESET}"
+echo
+printf "    %bSetLoadedAddress%b     - Apply your fixed MAC\n" "$GREEN" "$RESET"
+printf "    %bRandomizeMacAddress%b  - Apply random locally-administered MAC\n" "$GREEN" "$RESET"
+printf "    %bRevertMacAddress%b     - Restore hardware MAC\n" "$GREEN" "$RESET"
+printf "    %bShowMacAddress%b       - Show current vs original MAC\n" "$GREEN" "$RESET"
+echo
+printf "    %bspoofhelp%b            - Show this help menu\n" "$YELLOW" "$RESET"
+printf "    %bcleanspoofer%b         - Remove all spoof helper files\n" "$YELLOW" "$RESET"
+echo
+echo "  Note: Some macOS versions block Wi-Fi MAC changes."
+echo "        USB / Ethernet adapters usually work better than en0."
+echo
+printf "%b\n" "${CYAN}==========================================================${RESET}"
+echo
+EOF
+
+  # cleanspoofer
+  cat > "$SCRIPTS_DIR/cleanspoofer.sh" <<'EOF'
+#!/bin/zsh
+CONFIG_DIR="$HOME/.macspoof"
+CONFIG_FILE="$CONFIG_DIR/config"
+RESET="\033[0m"
+CYAN="\033[36m"
+YELLOW="\033[33m"
+GREEN="\033[32m"
+RED="\033[31m"
+
+echo
+printf "%b\n" "${CYAN}============ CLEAN SPOOFER UTILITY ============${RESET}"
+echo
 echo "  This will attempt to:"
-echo "    - Revert MAC to original"
+echo "    - Revert MAC to original (if config exists)"
 echo "    - Remove ~/.macspoof"
-echo "    - Remove spoof aliases"
-echo ""
+echo "    - Remove spoof helper aliases from ~/.zshrc"
+echo
+printf "Are you sure? (y/N): "
+read -r ans
 
-read "ANS?Are you sure? (y/N): "
-[[ "$ANS" != "y" ]] && exit 0
+if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+  echo "Aborted."
+  exit 0
+fi
 
-sudo ifconfig "$INTERFACE" ether "$ORIGINAL" >/dev/null 2>&1
+IFACE=""
+ORIGINAL_MAC=""
 
-rm -rf "$HOME/macspoof"
+if [[ -f "$CONFIG_FILE" ]]; then
+  source "$CONFIG_FILE"
+fi
 
-sed -i '' '/SetLoadedAddress/d' ~/.zshrc
-sed -i '' '/RandomizeMacAddress/d' ~/.zshrc
-sed -i '' '/RevertMacAddress/d' ~/.zshrc
-sed -i '' '/ShowMacAddress/d' ~/.zshrc
-sed -i '' '/spoofhelp/d' ~/.zshrc
-sed -i '' '/cleanspoofer/d' ~/.zshrc
+if [[ -n "$IFACE" && -n "$ORIGINAL_MAC" ]]; then
+  echo "Reverting MAC on $IFACE to $ORIGINAL_MAC (best effort)..."
+  sudo ifconfig "$IFACE" up 2>/dev/null || true
+  sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC" 2>/dev/null || true
+fi
 
-echo "[OK] Removed spoof helper."
+# Remove block from ~/.zshrc
+if [[ -f "$HOME/.zshrc" ]]; then
+  tmpfile="$HOME/.zshrc.macspoof-cleaned.$$"
+  sed '/# >>> Mac Spoof Helper (macspoof) >>>/,/# <<< Mac Spoof Helper (macspoof) <<</d' "$HOME/.zshrc" > "$tmpfile" && mv "$tmpfile" "$HOME/.zshrc"
+  sed '/# >>> Mac Spoof Helper Prompt (macspoof) >>>/,/# <<< Mac Spoof Helper Prompt (macspoof) <<</d' "$HOME/.zshrc" > "$tmpfile" && mv "$tmpfile" "$HOME/.zshrc"
+fi
+
+rm -rf "$CONFIG_DIR"
+
+echo
+printf "%b[OK]%b Spoof helper removed.\n" "$GREEN" "$RESET"
 echo "Run: source ~/.zshrc"
+echo
 EOF
-chmod +x "$SCRIPT_DIR/cleanspoofer.sh"
 
+  chmod +x "$SCRIPTS_DIR"/*.sh
+}
 
+# ---------- Install aliases and Minecraft-style prompt into ~/.zshrc ----------
+install_zshrc_block() {
+  # Remove any previous helper block
+  if [[ -f "$HOME/.zshrc" ]]; then
+    sed -i '' '/# >>> Mac Spoof Helper (macspoof) >>>/,/# <<< Mac Spoof Helper (macspoof) <<</d' "$HOME/.zshrc"
+    sed -i '' '/# >>> Mac Spoof Helper Prompt (macspoof) >>>/,/# <<< Mac Spoof Helper Prompt (macspoof) <<</d' "$HOME/.zshrc"
+  fi
 
-# ------------------------------------------------------------
-# *** ADD ALIASES TO ~/.zshrc ***
-# ------------------------------------------------------------
+  {
+    echo '# >>> Mac Spoof Helper (macspoof) >>>'
+    echo "alias SetLoadedAddress=\"$SCRIPTS_DIR/SetLoadedAddress.sh\""
+    echo "alias RandomizeMacAddress=\"$SCRIPTS_DIR/RandomizeMacAddress.sh\""
+    echo "alias RevertMacAddress=\"$SCRIPTS_DIR/RevertMacAddress.sh\""
+    echo "alias ShowMacAddress=\"$SCRIPTS_DIR/ShowMacAddress.sh\""
+    echo "alias spoofhelp=\"$SCRIPTS_DIR/spoofhelp.sh\""
+    echo "alias cleanspoofer=\"$SCRIPTS_DIR/cleanspoofer.sh\""
+    echo '# <<< Mac Spoof Helper (macspoof) <<<'
+    echo
+    echo '# >>> Mac Spoof Helper Prompt (macspoof) >>>'
+    echo 'autoload -U colors && colors'
+    echo 'setopt PROMPT_SUBST'
+    # Minecraft-style-ish prompt: green path, yellow user@host
+    echo "PROMPT=\$'%F{green}⛏ %F{yellow}%n@%m %F{green}%~%f\n%F{green}➜ %f'"
+    echo '# <<< Mac Spoof Helper Prompt (macspoof) <<<'
+  } >> "$HOME/.zshrc"
+}
 
-{
-  echo "# >>> MAC SPOOFER (dimension53) >>>"
-  echo "alias SetLoadedAddress='$SCRIPT_DIR/SetLoadedAddress.sh'"
-  echo "alias RandomizeMacAddress='$SCRIPT_DIR/RandomizeMacAddress.sh'"
-  echo "alias RevertMacAddress='$SCRIPT_DIR/RevertMacAddress.sh'"
-  echo "alias ShowMacAddress='$SCRIPT_DIR/ShowMacAddress.sh'"
-  echo "alias spoofhelp='$SCRIPT_DIR/spoofhelp.sh'"
-  echo "alias cleanspoofer='$SCRIPT_DIR/cleanspoofer.sh'"
-  echo "# <<< MAC SPOOFER <<<"
-} >> ~/.zshrc
+# ---------- MAIN ----------
+print_header
+prompt_for_config
+write_config
+write_scripts
+install_zshrc_block
 
-
-echo ""
-echo "[OK] Installation complete!"
+echo
+printf "%b[OK]%b Installation complete!\n" "$GREEN" "$RESET"
 echo "Run the following:"
-echo ""
+echo
 echo "  source ~/.zshrc"
 echo "  spoofhelp"
-echo ""
-echo "=============================================================="
+echo
+printf "%b\n" "${CYAN}==============================================================${RESET}"
