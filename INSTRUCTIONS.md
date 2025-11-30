@@ -1,23 +1,21 @@
 # Macbook Network Spoofer — Easy Terminal Commands
 
-This tool works on **macOS only**.
-Wi-Fi (en0) spoofing is **blocked** by Apple on macOS Catalina and later.
-USB/Ethernet adapters **(en3, en4, etc.)** work perfectly.
+This tool works on **macOS only**.  
+Wi-Fi (en0) spoofing is **blocked** by Apple on macOS Catalina and later.  
+USB/Ethernet adapters **(en3, en4, etc.)** spoof correctly.
 
+This tool provides a simple installer that adds helpful macOS network commands directly into your terminal.  
+It is lightweight, beginner-friendly, and requires **no external dependencies**.
 
+Users can spoof the MAC address of:
 
-This tool provides a simple installer that adds helpful macOS network-related terminal commands into your system.  
-It is designed to be beginner-friendly and easy to set up.
+- **USB Ethernet adapters**
+- **USB-C → Ethernet dongles**
+- **Thunderbolt Ethernet adapters**
+- **(Sometimes) virtual interfaces**
 
-users will only be able to **spoof**:
+---
 
-**USB** Ethernet adapters
-
-**USB-C** → Ethernet dongles
-
-**Thunderbolt** Ethernet adapters
-
-Virtual interfaces (sometimes)
 ------------------------------------------------------------
 📌 1. Installation Options
 ------------------------------------------------------------
@@ -30,9 +28,10 @@ You may install this tool in one of three ways depending on how you downloaded i
 
 Paste this into Terminal:
 
-    curl -fsSL https://raw.githubusercontent.com/errorline21/Macbook-Network-Spoofer-test/main/install.sh -o install.sh
-    chmod +x install.sh
-    ./install.sh
+    ```sh
+curl -fsSL https://raw.githubusercontent.com/errorline21/Macbook-Network-Spoofer-test/main/install.sh -o install.sh
+chmod +x install.sh
+./install.sh
 
 ------------------------------------------------------------
 ✅ Option 2 — Installing from ZIP Download
@@ -45,9 +44,9 @@ If you downloaded the project via “Download ZIP”:
 3. Navigate into the unzipped directory.
 4. Run:
 
-       cd ~/Downloads/Macbook-Network-Spoofer-test    # or wherever you placed the folder
-       chmod +x install.sh
-       ./install.sh
+cd ~/Downloads/Macbook-Network-Spoofer-test      # or the folder you unzipped
+chmod +x install.sh
+./install.sh
 
 ------------------------------------------------------------
 ✅ Option 3 — Install via Git Clone
@@ -55,10 +54,11 @@ If you downloaded the project via “Download ZIP”:
 
 If you prefer installing through Git:
 
-    git clone https://github.com/errorline21/Macbook-Network-Spoofer-test.git
-    cd Macbook-Network-Spoofer-test
-    chmod +x install.sh
-    ./install.sh
+git clone https://github.com/errorline21/Macbook-Network-Spoofer-test.git
+cd Macbook-Network-Spoofer-test
+chmod +x install.sh
+./install.sh
+
 
 ------------------------------------------------------------
 📌 2. After Installation
@@ -66,13 +66,21 @@ If you prefer installing through Git:
 
 Reload your shell so the new commands become active:
 
-    source ~/.zshrc
+   source ~/.zshrc
 
 Once reloaded, you can run:
 
-    Help
+ spoofhelp
 
 to view the list of available commands.
+
+SetLoadedAddress     - Apply your custom MAC Address
+RandomizeMacAddress  - Apply a random MAC
+RevertMacAddress     - Restore original hardware MAC
+ShowMacAddress       - Show current vs original MAC
+cleanspoofer         - Fully remove the tool
+spoofhelp            - Show help
+
 
 ------------------------------------------------------------
 📌 3. Requirements
@@ -106,6 +114,13 @@ If the folder was moved after installation, reinstall using Option 1.
 
 MIT License — free to use, modify, and distribute.
 
+------------------------------------------------------------
+
+------------------------------------------------------------
+📌 6. Want to uninstall?
+
+cleanspoofer
+source ~/.zshrc
 ------------------------------------------------------------
 
 SPOOFING YOUR MAC ADDRESS IS NOT PERMITTED, THIS IS FOR RESETTING YOUR MAC ADDRESS ONLY!  
