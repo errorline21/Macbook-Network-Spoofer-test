@@ -28,9 +28,12 @@ You may install this tool in one of three ways depending on how you downloaded i
 
 Paste this into Terminal:
 
-curl -fsSL https://raw.githubusercontent.com/errorline21/Macbook-Network-Spoofer-test/master/install.sh -o install.sh
+```sh
+curl -fsSL https://raw.githubusercontent.com/errorline21/Macbook-Network-Spoofer-test/main/install.sh -o install.sh
 chmod +x install.sh
 ./install.sh
+
+
 
 
 
@@ -68,6 +71,7 @@ chmod +x install.sh
 Reload your shell so the new commands become active:
 
    source ~/.zshrc
+
 
 Once reloaded, you can run:
 
