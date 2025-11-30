@@ -16,6 +16,8 @@ BLUE="\033[34m"
 MAGENTA="\033[35m"
 CYAN="\033[36m"
 
+
+
 # ---------- Gradient credit for Dimension53 ----------
 # ---------- Simple rainbow credit (each letter colored) ----------
 render_discord_credit() {
@@ -55,6 +57,12 @@ print_header() {
   printf "\n%b\n" "${CYAN}==============================================================${RESET}"
   printf "\n"
 }
+
+# Detect if interface is Wi-Fi (en0)
+is_wifi_iface() {
+    [[ "$1" == "en0" ]]
+}
+
 
 
 
@@ -162,25 +170,35 @@ CYAN="\033[36m"
 RED="\033[31m"
 '
 
-  # ShowMacAddress
-  cat > "$SCRIPTS_DIR/ShowMacAddress.sh" <<EOF
-$COMMON
-echo
-printf "%b\n" "\${CYAN}==================== MAC STATUS =====================\${RESET}"
-echo
-echo "  Interface        : \$IFACE"
-echo "  Current MAC      : \${CURRENT_MAC:-UNKNOWN}"
-echo "  Original MAC     : \${ORIG:-UNKNOWN}"
-echo
-if [[ -n "\$CURRENT_MAC" && "\$CURRENT_MAC" = "\$ORIG" ]]; then
-  printf "%b\n" "\${GREEN}  Status: MATCH → Using ORIGINAL hardware MAC\${RESET}"
-else
-  printf "%b\n" "\${YELLOW}  Status: DIFFERENT → Using SPOOFED MAC\${RESET}"
+# SetLoadedAddress (apply fixed MAC)
+  cat > "$SCRIPTS_DIR/SetLoadedAddress.sh" <<'EOF'
+#!/bin/zsh
+CONFIG_FILE="$HOME/.macspoof/config"
+source "$CONFIG_FILE"
+
+RESET="\033[0m"
+YELLOW="\033[33m"
+GREEN="\033[32m"
+RED="\033[31m"
+CYAN="\033[36m"
+
+echo "Bringing $IFACE up..."
+sudo ifconfig "$IFACE" up 2>/dev/null || true
+
+echo "Attempting to set MAC on $IFACE to $FIX ..."
+if ! sudo ifconfig "$IFACE" ether "$FIX" 2>/dev/null; then
+    if [[ "$IFACE" == "en0" ]]; then
+        echo "${YELLOW}[WARNING] macOS blocked Wi-Fi MAC spoofing on en0.${RESET}"
+        echo "         Apple prevents changing the Wi-Fi adapter MAC."
+    else
+        echo "${RED}[ERROR] Failed to modify MAC on $IFACE${RESET}"
+    fi
 fi
-echo
-printf "%b\n" "\${CYAN}======================================================\${RESET}"
-echo
+
+"$HOME/.macspoof/scripts/ShowMacAddress.sh"
 EOF
+
+
 
   # SetLoadedAddress (apply fixed MAC)
   cat > "$SCRIPTS_DIR/SetLoadedAddress.sh" <<EOF
@@ -199,29 +217,15 @@ EOF
   cat > "$SCRIPTS_DIR/RandomizeMacAddress.sh" <<'EOF'
 #!/bin/zsh
 CONFIG_FILE="$HOME/.macspoof/config"
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  echo "[ERROR] Config not found at $CONFIG_FILE"
-  exit 1
-fi
 source "$CONFIG_FILE"
-CURRENT_MAC_RAW=$(ifconfig "$IFACE" 2>/dev/null | awk '/ether/{print $2; exit}')
-CURRENT_MAC=${CURRENT_MAC_RAW:u}
+
 RESET="\033[0m"
-CYAN="\033[36m"
+YELLOW="\033[33m"
 
-# Random MAC generator (locally-administered, unicast)
-rand_byte() {
-  printf "%02X" $(( RANDOM % 256 ))
-}
+rand() { printf "%02X" $(( RANDOM % 256 )); }
 
-b1=$(rand_byte)
-b2=$(rand_byte)
-b3=$(rand_byte)
-b4=$(rand_byte)
-b5=$(rand_byte)
-b6=$(rand_byte)
+b1=$(rand); b2=$(rand); b3=$(rand); b4=$(rand); b5=$(rand); b6=$(rand)
 
-# Make first byte locally-administered (bit1=1) and unicast (bit0=0)
 first_dec=$(( 0x$b1 ))
 first_dec=$(( (first_dec | 0x02) & 0xFE ))
 printf -v b1 "%02X" "$first_dec"
@@ -232,25 +236,45 @@ echo "Bringing $IFACE up..."
 sudo ifconfig "$IFACE" up 2>/dev/null || true
 
 echo "Setting RANDOM MAC on $IFACE to $RAND_MAC ..."
-sudo ifconfig "$IFACE" ether "$RAND_MAC" || {
-  echo "[ERROR] Failed to set random MAC on $IFACE"
-  exit 1
-}
+if ! sudo ifconfig "$IFACE" ether "$RAND_MAC" 2>/dev/null; then
+    if [[ "$IFACE" == "en0" ]]; then
+        echo "${YELLOW}[WARNING] macOS blocked Wi-Fi MAC spoofing on en0.${RESET}"
+        echo "         Wi-Fi MAC cannot be randomized on modern macOS."
+    else
+        echo "[ERROR] Failed to set random MAC on $IFACE"
+    fi
+fi
+
 "$HOME/.macspoof/scripts/ShowMacAddress.sh"
 EOF
 
+
   # RevertMacAddress (restore hardware MAC)
-  cat > "$SCRIPTS_DIR/RevertMacAddress.sh" <<EOF
-$COMMON
-echo "Bringing \$IFACE up..."
-sudo ifconfig "\$IFACE" up 2>/dev/null || true
-echo "Reverting MAC on \$IFACE to \$ORIG ..."
-sudo ifconfig "\$IFACE" ether "\$ORIG" || {
-  echo "[ERROR] Failed to revert MAC on \$IFACE"
-  exit 1
-}
-"\$HOME/.macspoof/scripts/ShowMacAddress.sh"
+  cat > "$SCRIPTS_DIR/RevertMacAddress.sh" <<'EOF'
+#!/bin/zsh
+CONFIG_FILE="$HOME/.macspoof/config"
+source "$CONFIG_FILE"
+
+RESET="\033[0m"
+YELLOW="\033[33m"
+RED="\033[31m"
+
+echo "Bringing $IFACE up..."
+sudo ifconfig "$IFACE" up 2>/dev/null || true
+
+echo "Reverting MAC on $IFACE to $ORIGINAL_MAC ..."
+if ! sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC" 2>/dev/null; then
+    if [[ "$IFACE" == "en0" ]]; then
+        echo "${YELLOW}[WARNING] macOS blocked Wi-Fi MAC restore on en0.${RESET}"
+        echo "         This adapter always forces its true hardware MAC."
+    else
+        echo "${RED}[ERROR] Could not revert MAC on $IFACE${RESET}"
+    fi
+fi
+
+"$HOME/.macspoof/scripts/ShowMacAddress.sh"
 EOF
+
 
   # spoofhelp (pretty UI)
   cat > "$SCRIPTS_DIR/spoofhelp.sh" <<'EOF'
