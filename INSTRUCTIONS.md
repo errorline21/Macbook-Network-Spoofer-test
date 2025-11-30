@@ -108,19 +108,14 @@ If the commands are not recognized:
 
 If the folder was moved after installation, reinstall using Option 1.
 
-------------------------------------------------------------
-📌 5. License
-------------------------------------------------------------
-
-MIT License — free to use, modify, and distribute.
 
 ------------------------------------------------------------
-
+📌 5. Want to uninstall?
 ------------------------------------------------------------
-📌 6. Want to uninstall?
 
 cleanspoofer
 source ~/.zshrc
+
 ------------------------------------------------------------
 
 SPOOFING YOUR MAC ADDRESS IS NOT PERMITTED, THIS IS FOR RESETTING YOUR MAC ADDRESS ONLY!  
