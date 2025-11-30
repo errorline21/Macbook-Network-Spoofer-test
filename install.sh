@@ -1,424 +1,461 @@
 #!/bin/zsh
 set -e
 
-# ---------------- COLORS ----------------
-RED=$'%{\e[31m%}'
-GREEN=$'%{\e[32m%}'
-YELLOW=$'%{\e[33m%}'
-BLUE=$'%{\e[34m%}'
-CYAN=$'%{\e[36m%}'
-BOLD=$'%{\e[1m%}'
-RESET=$'%{\e[0m%}'
+MACSPOOF_DIR="$HOME/macspoof"
+CONFIG_FILE="$MACSPOOF_DIR/config"
+COMMON_FILE="$MACSPOOF_DIR/net-common.sh"
 
-plain_red="\033[31m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_blue="\033[34m"
-plain_cyan="\033[36m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
+# -------------------------------------------------------------------
+#  Colors (basic, always safe — scripts detect if they can use them)
+# -------------------------------------------------------------------
+C_RESET=$'\033[0m'
+C_GREEN=$'\033[32m'
+C_CYAN=$'\033[36m'
+C_MAGENTA=$'\033[35m'
+C_YELLOW=$'\033[33m'
+C_RED=$'\033[31m'
+C_BOLD=$'\033[1m'
 
 echo ""
-echo "${plain_cyan}${plain_bold}================ MAC SPOOF HELPER INSTALLER ================${plain_reset}"
+echo "${C_CYAN}================ MAC SPOOF HELPER INSTALLER ================${C_RESET}"
 echo ""
 
-# ---------------- SAFETY CHECKS ----------------
-if [ "$(uname)" != "Darwin" ]; then
-  echo "${plain_red}[ERROR]${plain_reset} This installer is for macOS only."
+# -------------------------------------------------------------------
+#  1. Sanity checks
+# -------------------------------------------------------------------
+if [[ "$(uname)" != "Darwin" ]]; then
+  echo "${C_RED}[ERROR]${C_RESET} This installer is for macOS only."
   exit 1
 fi
 
-CONFIG_DIR="$HOME/.macspoof"
-SCRIPTS_DIR="$CONFIG_DIR/scripts"
-CONF_FILE="$CONFIG_DIR/config.conf"
-
-mkdir -p "$SCRIPTS_DIR"
-
-echo "${plain_blue}[INFO]${plain_reset} Scanning network interfaces (enX)..."
+# -------------------------------------------------------------------
+#  2. Find enX interfaces + current MACs
+# -------------------------------------------------------------------
+echo "${C_YELLOW}[INFO]${C_RESET} Scanning network interfaces (enX)..."
 echo ""
 
-# List enX interfaces with MAC addresses
-ifconfig | awk '
-  BEGIN { OFS=""; }
-  /^en[0-9]:/ {
-    gsub(":", "", $1);
-    iface=$1;
-  }
-  /ether/ && iface != "" {
-    mac=toupper($2);
-    printf("  - %s   (MAC: %s)\n", iface, mac);
-    iface="";
-  }
-'
+# Gather en* devices from networksetup
+INTERFACES=()
+while IFS= read -r line; do
+  INTERFACES+=("$line")
+done < <(networksetup -listallhardwareports 2>/dev/null | awk '/Device: en/{print $2}')
 
-DEFAULT_IFACE=$(ifconfig | awk '/^en[0-9]:/ {gsub(":", "", $1); print $1; exit}')
+if [[ ${#INTERFACES[@]} -eq 0 ]]; then
+  echo "${C_RED}[ERROR]${C_RESET} No enX interfaces found. Cannot continue."
+  exit 1
+fi
 
-if [ -z "$DEFAULT_IFACE" ]; then
-  echo ""
-  echo "${plain_red}[ERROR]${plain_reset} No enX interfaces found. Aborting."
+for IF in "${INTERFACES[@]}"; do
+  MAC=$(ifconfig "$IF" 2>/dev/null | awk '/ether /{print $2}' | head -n1 | tr '[:lower:]' '[:upper:]')
+  [[ -z "$MAC" ]] && MAC="(unknown)"
+  echo "  - ${C_GREEN}${IF}${C_RESET}   (MAC: ${MAC})"
+done
+
+echo ""
+echo "Note: On modern macOS, Wi-Fi (${C_GREEN}en0${C_RESET}) often cannot be spoofed."
+echo "      USB / Ethernet adapters (${C_GREEN}en3${C_RESET}, ${C_GREEN}en4${C_RESET}, etc.) usually work better."
+echo ""
+
+DEFAULT_IF="${INTERFACES[1]}"
+
+# -------------------------------------------------------------------
+#  3. Prompt for interface + fixed MAC
+# -------------------------------------------------------------------
+read "IFACE?Enter the interface you want to use (default: ${DEFAULT_IF}): "
+IFACE="${IFACE:-$DEFAULT_IF}"
+
+if ! printf '%s\n' "${INTERFACES[@]}" | grep -qx "$IFACE"; then
+  echo "${C_RED}[ERROR]${C_RESET} '$IFACE' is not a valid enX interface on this system."
+  exit 1
+fi
+
+ORIGINAL_MAC=$(ifconfig "$IFACE" 2>/dev/null | awk '/ether /{print $2}' | head -n1 | tr '[:lower:]' '[:upper:]')
+if [[ -z "$ORIGINAL_MAC" ]]; then
+  echo "${C_RED}[ERROR]${C_RESET} Could not read MAC for interface ${IFACE}."
   exit 1
 fi
 
 echo ""
-echo "${plain_yellow}Note:${plain_reset} On modern macOS, Wi-Fi (en0) often ${plain_bold}cannot${plain_reset} be spoofed."
-echo "      USB / Ethernet adapters (en3, en4, etc.) usually work better."
+echo "Detected current MAC on ${C_GREEN}${IFACE}${C_RESET}: ${C_BOLD}${ORIGINAL_MAC}${C_RESET}"
 echo ""
-
-read "IFACE?Enter the interface you want to use (default: $DEFAULT_IFACE): "
-IFACE=${IFACE:-$DEFAULT_IFACE}
-
-# Get current MAC for that interface
-ORIGINAL_MAC=$(ifconfig "$IFACE" 2>/dev/null | awk '/ether/{print toupper($2); exit}')
-
-if [ -z "$ORIGINAL_MAC" ]; then
-  echo ""
-  echo "${plain_red}[ERROR]${plain_reset} Could not read MAC for interface ${plain_bold}$IFACE${plain_reset}."
-  exit 1
-fi
+read "FIXED_MAC?Enter the FIXED custom MAC you want (format XX:XX:XX:XX:XX:XX): "
+FIXED_MAC="$(echo "$FIXED_MAC" | tr '[:lower:]' '[:upper:]')"
 
 echo ""
-echo "${plain_blue}[INFO]${plain_reset} Detected current MAC on ${plain_bold}$IFACE${plain_reset}: ${plain_green}$ORIGINAL_MAC${plain_reset}"
-echo ""
-
-read "FIXED?Enter the FIXED custom MAC you want (format XX:XX:XX:XX:XX:XX): "
-FIXED=$(echo "$FIXED" | tr '[:lower:]' '[:upper:]')
-
-echo ""
-echo "Interface      : $IFACE"
-echo "Original MAC   : $ORIGINAL_MAC"
-echo "Fixed spoof MAC: $FIXED"
+echo "Interface      : ${C_GREEN}${IFACE}${C_RESET}"
+echo "Original MAC   : ${C_YELLOW}${ORIGINAL_MAC}${C_RESET}"
+echo "Fixed spoof MAC: ${C_MAGENTA}${FIXED_MAC}${C_RESET}"
 echo ""
 read "CONFIRM?Is this correct? (y/n): "
 
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-  echo ""
-  echo "${plain_yellow}[ABORT]${plain_reset} User canceled. Nothing installed."
-  exit 0
+  echo "${C_RED}Canceled.${C_RESET}"
+  exit 1
 fi
 
-echo ""
-echo "${plain_blue}[TEST]${plain_reset} Checking if ${plain_bold}$IFACE${plain_reset} accepts MAC changes..."
-echo "       You may be asked for your password."
-echo ""
+# -------------------------------------------------------------------
+#  4. Prepare directory + config
+# -------------------------------------------------------------------
+mkdir -p "$MACSPOOF_DIR"
 
-# Build a temporary random MAC starting with 02
-RAND_HEX=$(openssl rand -hex 5 | tr '[:lower:]' '[:upper:]')  # 10 hex chars
-TEMP_MAC="02:${RAND_HEX:0:2}:${RAND_HEX:2:2}:${RAND_HEX:4:2}:${RAND_HEX:6:2}:${RAND_HEX:8:2}"
-
-SPOOFABLE="yes"
-
-# Try changing MAC and reverting
-if sudo ifconfig "$IFACE" up 2>/dev/null && \
-   sudo ifconfig "$IFACE" ether "$TEMP_MAC" 2>/dev/null; then
-  # Now revert
-  sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC" 2>/dev/null || true
-  echo "${plain_green}[OK]${plain_reset} Interface ${plain_bold}$IFACE${plain_reset} appears spoofable."
-else
-  echo "${plain_yellow}[WARN]${plain_reset} macOS refused to change MAC on ${plain_bold}$IFACE${plain_reset}."
-  echo "      Commands will still be installed, but MAC changes may fail at runtime."
-  SPOOFABLE="no"
-fi
-
-# ---------------- WRITE CONFIG ----------------
-cat > "$CONF_FILE" <<EOF
-# Real MAC Spoof Helper Config
+cat > "$CONFIG_FILE" <<EOF
+# Mac Spoof Helper config
 IFACE="$IFACE"
 ORIGINAL_MAC="$ORIGINAL_MAC"
-FIXED_MAC="$FIXED"
-SPOOFABLE="$SPOOFABLE"
+FIXED_MAC="$FIXED_MAC"
 EOF
 
-echo ""
-echo "${plain_green}[OK]${plain_reset} Saved configuration to ${plain_bold}$CONF_FILE${plain_reset}"
-echo ""
-
-# ---------------- CREATE SCRIPTS ----------------
-
-# macshow.sh
-cat > "$SCRIPTS_DIR/macshow.sh" <<'EOF'
+# -------------------------------------------------------------------
+#  5. Common functions file (shared by all net: commands)
+# -------------------------------------------------------------------
+cat > "$COMMON_FILE" <<'EOF'
 #!/bin/zsh
 
-plain_red="\033[31m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_cyan="\033[36m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
+MACSPOOF_DIR="$HOME/macspoof"
+CONFIG_FILE="$MACSPOOF_DIR/config"
 
-CONF_FILE="$HOME/.macspoof/config.conf"
+# Basic colors (scripts will use them only if terminal supports)
+C_RESET=$'\033[0m'
+C_GREEN=$'\033[32m'
+C_CYAN=$'\033[36m'
+C_MAGENTA=$'\033[35m'
+C_YELLOW=$'\033[33m'
+C_RED=$'\033[31m'
+C_BOLD=$'\033[1m'
 
-if [ ! -f "$CONF_FILE" ]; then
-  echo "${plain_red}[ERROR]${plain_reset} Config file not found at $CONF_FILE"
+# Detect color support
+supports_color() {
+  [[ -t 1 ]] || return 1
+  command -v tput >/dev/null 2>&1 || return 1
+  local n
+  n=$(tput colors 2>/dev/null || echo 0)
+  [[ "$n" -ge 8 ]]
+}
+
+# Rainbow printer (per-character color; non-animated)
+rainbow_text() {
+  local text="$1"
+  if ! supports_color; then
+    printf "%s\n" "$text"
+    return
+  fi
+
+  local colors=(31 33 32 36 34 35) # red, yellow, green, cyan, blue, magenta
+  local i=0 c ch code
+  local len=${#text}
+
+  for (( c=1; c<=len; c++ )); do
+    ch=${text[$c]}
+    code=${colors[$(( (i % ${#colors[@]}) + 1 ))]}
+    printf "\033[%sm%s\033[0m" "$code" "$ch"
+    ((i++))
+  done
+  printf "\n"
+}
+
+load_config() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "${C_RED}[ERROR]${C_RESET} Config file not found at $CONFIG_FILE"
+    echo "Run the installer again to setup Mac Spoof Helper."
+    return 1
+  fi
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+  if [[ -z "$IFACE" || -z "$ORIGINAL_MAC" ]]; then
+    echo "${C_RED}[ERROR]${C_RESET} Config file is missing required values."
+    return 1
+  fi
+  return 0
+}
+
+print_status() {
+  load_config || return 1
+  local current
+  current=$(ifconfig "$IFACE" 2>/dev/null | awk '/ether /{print $2}' | head -n1 | tr '[:lower:]' '[:upper:]')
+  [[ -z "$current" ]] && current="(unknown)"
+
+  echo ""
+  echo "${C_CYAN}==================== MAC STATUS ====================${C_RESET}"
+  echo ""
+  echo "  Interface        : ${C_GREEN}${IFACE}${C_RESET}"
+  echo "  Current MAC      : ${C_BOLD}${current}${C_RESET}"
+  echo "  Original MAC     : ${C_YELLOW}${ORIGINAL_MAC}${C_RESET}"
+  echo ""
+
+  if [[ "$current" == "$ORIGINAL_MAC" ]]; then
+    echo "  Status: ${C_GREEN}MATCH → Using ORIGINAL hardware MAC${C_RESET}"
+  else
+    echo "  Status: ${C_MAGENTA}DIFFERENT → Using SPOOFED MAC${C_RESET}"
+  fi
+
+  echo ""
+  echo "${C_CYAN}=====================================================${C_RESET}"
+  echo ""
+}
+
+# Generate random locally-administered unicast MAC
+generate_random_mac() {
+  # 6 random bytes
+  local raw first rest
+  raw=$(hexdump -n6 -v -e '/1 "%02X:"' /dev/urandom 2>/dev/null | sed 's/:$//')
+  first=${raw%%:*}
+  rest=${raw#*:}
+  # Force first byte to 02 (locally administered, unicast)
+  first="02"
+  echo "${first}:${rest}"
+}
+
+EOF
+
+chmod +x "$COMMON_FILE"
+
+# -------------------------------------------------------------------
+#  6. Create command scripts
+# -------------------------------------------------------------------
+
+# net-set.sh  → net:set
+cat > "$MACSPOOF_DIR/net-set.sh" <<'EOF'
+#!/bin/zsh
+set -e
+source "$HOME/macspoof/net-common.sh"
+
+if ! load_config; then exit 1; fi
+
+echo "Bringing ${C_GREEN}${IFACE}${C_RESET} up..."
+sudo ifconfig "$IFACE" up || true
+
+echo "Setting MAC on ${C_GREEN}${IFACE}${C_RESET} to ${C_MAGENTA}${FIXED_MAC}${C_RESET} ..."
+sudo ifconfig "$IFACE" ether "$FIXED_MAC"
+
+print_status
+EOF
+chmod +x "$MACSPOOF_DIR/net-set.sh"
+
+# net-random.sh  → net:random
+cat > "$MACSPOOF_DIR/net-random.sh" <<'EOF'
+#!/bin/zsh
+set -e
+source "$HOME/macspoof/net-common.sh"
+
+if ! load_config; then exit 1; fi
+
+RANDOM_MAC=$(generate_random_mac)
+
+echo "Bringing ${C_GREEN}${IFACE}${C_RESET} up..."
+sudo ifconfig "$IFACE" up || true
+
+echo "Setting RANDOM MAC on ${C_GREEN}${IFACE}${C_RESET} to ${C_MAGENTA}${RANDOM_MAC}${C_RESET} ..."
+sudo ifconfig "$IFACE" ether "$RANDOM_MAC"
+
+print_status
+EOF
+chmod +x "$MACSPOOF_DIR/net-random.sh"
+
+# net-revert.sh  → net:revert
+cat > "$MACSPOOF_DIR/net-revert.sh" <<'EOF'
+#!/bin/zsh
+set -e
+source "$HOME/macspoof/net-common.sh"
+
+if ! load_config; then exit 1; fi
+
+echo "Bringing ${C_GREEN}${IFACE}${C_RESET} up..."
+sudo ifconfig "$IFACE" up || true
+
+echo "Reverting MAC on ${C_GREEN}${IFACE}${C_RESET} to ${C_YELLOW}${ORIGINAL_MAC}${C_RESET} ..."
+sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC"
+
+print_status
+EOF
+chmod +x "$MACSPOOF_DIR/net-revert.sh"
+
+# net-show.sh  → net:show
+cat > "$MACSPOOF_DIR/net-show.sh" <<'EOF'
+#!/bin/zsh
+set -e
+source "$HOME/macspoof/net-common.sh"
+print_status
+EOF
+chmod +x "$MACSPOOF_DIR/net-show.sh"
+
+# net-config.sh  → net:config (safest: only edits config, no MAC changes)
+cat > "$MACSPOOF_DIR/net-config.sh" <<'EOF'
+#!/bin/zsh
+set -e
+source "$HOME/macspoof/net-common.sh"
+
+echo ""
+echo "${C_CYAN}======== Reconfigure Mac Spoof Helper (net:config) ========${C_RESET}"
+echo ""
+
+# List interfaces again
+INTERFACES=()
+while IFS= read -r line; do
+  INTERFACES+=("$line")
+done < <(networksetup -listallhardwareports 2>/dev/null | awk '/Device: en/{print $2}')
+
+if [[ ${#INTERFACES[@]} -eq 0 ]]; then
+  echo "${C_RED}[ERROR]${C_RESET} No enX interfaces found."
   exit 1
 fi
 
-source "$CONF_FILE"
+for IF in "${INTERFACES[@]}"; do
+  MAC=$(ifconfig "$IF" 2>/dev/null | awk '/ether /{print $2}' | head -n1 | tr '[:lower:]' '[:upper:]')
+  [[ -z "$MAC" ]] && MAC="(unknown)"
+  echo "  - ${C_GREEN}${IF}${C_RESET}   (MAC: ${MAC})"
+done
 
-CURRENT_MAC=$(ifconfig "$IFACE" 2>/dev/null | awk '/ether/{print toupper($2); exit}')
-
+DEFAULT_IF="${INTERFACES[1]}"
 echo ""
-echo "${plain_cyan}${plain_bold}==================== MAC STATUS ====================${plain_reset}"
-echo ""
-echo "  Interface        : $IFACE"
-echo "  Current MAC      : ${plain_green}${CURRENT_MAC:-UNKNOWN}${plain_reset}"
-echo "  Original MAC     : ${plain_green}${ORIGINAL_MAC:-UNKNOWN}${plain_reset}"
-echo ""
+read "NEW_IF?Enter interface to use (default: ${DEFAULT_IF}): "
+NEW_IF="${NEW_IF:-$DEFAULT_IF}"
 
-if [ -z "$CURRENT_MAC" ]; then
-  echo "  Status: ${plain_red}UNKNOWN → interface not found or down${plain_reset}"
-elif [ "$CURRENT_MAC" = "$ORIGINAL_MAC" ]; then
-  echo "  Status: ${plain_green}MATCH → Using ORIGINAL hardware MAC${plain_reset}"
-else
-  echo "  Status: ${plain_yellow}DIFFERENT → Using SPOOFED MAC${plain_reset}"
-fi
-
-echo ""
-echo "====================================================="
-echo ""
-EOF
-chmod +x "$SCRIPTS_DIR/macshow.sh"
-
-# macfix.sh
-cat > "$SCRIPTS_DIR/macfix.sh" <<'EOF'
-#!/bin/zsh
-
-plain_red="\033[31m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_cyan="\033[36m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
-
-CONF_FILE="$HOME/.macspoof/config.conf"
-
-if [ ! -f "$CONF_FILE" ]; then
-  echo "${plain_red}[ERROR]${plain_reset} Config file not found at $CONF_FILE"
+if ! printf '%s\n' "${INTERFACES[@]}" | grep -qx "$NEW_IF"; then
+  echo "${C_RED}[ERROR]${C_RESET} '$NEW_IF' is not a valid enX interface."
   exit 1
 fi
 
-source "$CONF_FILE"
-
-echo "${plain_cyan}Bringing $IFACE up...${plain_reset}"
-sudo ifconfig "$IFACE" up 2>/dev/null || true
-
-echo "${plain_cyan}Setting MAC on $IFACE to ${plain_bold}$FIXED_MAC${plain_reset} ..."
-if sudo ifconfig "$IFACE" ether "$FIXED_MAC" 2>/dev/null; then
-  "$HOME/.macspoof/scripts/macshow.sh"
-else
-  echo "${plain_red}[ERROR]${plain_reset} macOS refused to set MAC on $IFACE."
-  echo "        This interface or OS version may block MAC spoofing."
-fi
-EOF
-chmod +x "$SCRIPTS_DIR/macfix.sh"
-
-# macrandom.sh
-cat > "$SCRIPTS_DIR/macrandom.sh" <<'EOF'
-#!/bin/zsh
-
-plain_red="\033[31m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_cyan="\033[36m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
-
-CONF_FILE="$HOME/.macspoof/config.conf"
-
-if [ ! -f "$CONF_FILE" ]; then
-  echo "${plain_red}[ERROR]${plain_reset} Config file not found at $CONF_FILE"
+NEW_ORIG=$(ifconfig "$NEW_IF" 2>/dev/null | awk '/ether /{print $2}' | head -n1 | tr '[:lower:]' '[:upper:]')
+if [[ -z "$NEW_ORIG" ]]; then
+  echo "${C_RED}[ERROR]${C_RESET} Could not read MAC for ${NEW_IF}."
   exit 1
 fi
 
-source "$CONF_FILE"
+echo ""
+echo "Detected current MAC on ${C_GREEN}${NEW_IF}${C_RESET}: ${C_BOLD}${NEW_ORIG}${C_RESET}"
+echo ""
+read "NEW_FIXED?Enter NEW fixed MAC (XX:XX:XX:XX:XX:XX): "
+NEW_FIXED="$(echo "$NEW_FIXED" | tr '[:lower:]' '[:upper:]')"
 
-# Generate random locally-administered MAC (02:xx:xx:xx:xx:xx)
-RAND_HEX=$(openssl rand -hex 5 | tr '[:lower:]' '[:upper:]')
-RAND_MAC="02:${RAND_HEX:0:2}:${RAND_HEX:2:2}:${RAND_HEX:4:2}:${RAND_HEX:6:2}:${RAND_HEX:8:2}"
+echo ""
+echo "New Interface  : ${C_GREEN}${NEW_IF}${C_RESET}"
+echo "New Original   : ${C_YELLOW}${NEW_ORIG}${C_RESET}"
+echo "New Fixed MAC  : ${C_MAGENTA}${NEW_FIXED}${C_RESET}"
+echo ""
+read "OKAY?Save this to config? (y/n): "
 
-echo "${plain_cyan}Bringing $IFACE up...${plain_reset}"
-sudo ifconfig "$IFACE" up 2>/dev/null || true
-
-echo "${plain_cyan}Setting RANDOM MAC on $IFACE to ${plain_bold}$RAND_MAC${plain_reset} ..."
-if sudo ifconfig "$IFACE" ether "$RAND_MAC" 2>/dev/null; then
-  "$HOME/.macspoof/scripts/macshow.sh"
-else
-  echo "${plain_red}[ERROR]${plain_reset} macOS refused to set random MAC on $IFACE."
-fi
-EOF
-chmod +x "$SCRIPTS_DIR/macrandom.sh"
-
-# macrevert.sh
-cat > "$SCRIPTS_DIR/macrevert.sh" <<'EOF'
-#!/bin/zsh
-
-plain_red="\033[31m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_cyan="\033[36m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
-
-CONF_FILE="$HOME/.macspoof/config.conf"
-
-if [ ! -f "$CONF_FILE" ]; then
-  echo "${plain_red}[ERROR]${plain_reset} Config file not found at $CONF_FILE"
+if [[ "$OKAY" != "y" && "$OKAY" != "Y" ]]; then
+  echo "${C_RED}Canceled.${C_RESET}"
   exit 1
 fi
 
-source "$CONF_FILE"
-
-echo "${plain_cyan}Bringing $IFACE up...${plain_reset}"
-sudo ifconfig "$IFACE" up 2>/dev/null || true
-
-echo "${plain_cyan}Reverting MAC on $IFACE to ${plain_bold}$ORIGINAL_MAC${plain_reset} ..."
-if sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC" 2>/dev/null; then
-  "$HOME/.macspoof/scripts/macshow.sh"
-else
-  echo "${plain_red}[ERROR]${plain_reset} macOS refused to revert MAC on $IFACE."
-fi
-EOF
-chmod +x "$SCRIPTS_DIR/macrevert.sh"
-
-# spoofhelp.sh
-cat > "$SCRIPTS_DIR/spoofhelp.sh" <<'EOF'
-#!/bin/zsh
-
-plain_cyan="\033[36m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
-
-CONF_FILE="$HOME/.macspoof/config.conf"
-IFACE="unknown"
-
-if [ -f "$CONF_FILE" ]; then
-  source "$CONF_FILE"
-fi
+cat > "$CONFIG_FILE" <<EOF2
+# Mac Spoof Helper config
+IFACE="$NEW_IF"
+ORIGINAL_MAC="$NEW_ORIG"
+FIXED_MAC="$NEW_FIXED"
+EOF2
 
 echo ""
-echo "${plain_cyan}${plain_bold}==================== SPOOF HELPER ====================${plain_reset}"
-echo ""
-echo "  Active interface : ${plain_green}$IFACE${plain_reset}"
-echo ""
-echo "  ${plain_bold}Available commands:${plain_reset}"
-echo ""
-echo "    ${plain_green}macfix${plain_reset}       - Apply your fixed MAC from config"
-echo "    ${plain_green}macrandom${plain_reset}    - Apply a random MAC (locally-administered)"
-echo "    ${plain_green}macrevert${plain_reset}    - Restore original hardware MAC"
-echo "    ${plain_green}macshow${plain_reset}      - Show current vs original MAC"
-echo ""
-echo "    ${plain_green}spoofhelp${plain_reset}    - Show this help menu"
-echo "    ${plain_green}cleanspoofer${plain_reset} - Revert MAC (if possible) and remove all spoof helper files"
-echo ""
-echo "${plain_yellow}  Note:${plain_reset} Some macOS versions block Wi-Fi MAC changes."
-echo "        USB / Ethernet adapters usually work better than en0."
-echo ""
-echo "=========================================================="
+echo "${C_GREEN}[OK]${C_RESET} Config updated."
+echo "Run: net:set   (or)  net:show"
 echo ""
 EOF
-chmod +x "$SCRIPTS_DIR/spoofhelp.sh"
+chmod +x "$MACSPOOF_DIR/net-config.sh"
 
-# cleanspoofer.sh
-cat > "$SCRIPTS_DIR/cleanspoofer.sh" <<'EOF'
+# net-help.sh  → net:help / spoofhelp
+cat > "$MACSPOOF_DIR/net-help.sh" <<'EOF'
 #!/bin/zsh
-
-plain_red="\033[31m"
-plain_green="\033[32m"
-plain_yellow="\033[33m"
-plain_cyan="\033[36m"
-plain_bold="\033[1m"
-plain_reset="\033[0m"
-
-CONFIG_DIR="$HOME/.macspoof"
-SCRIPTS_DIR="$CONFIG_DIR/scripts"
-CONF_FILE="$CONFIG_DIR/config.conf"
-
-IFACE=""
-ORIGINAL_MAC=""
-
-if [ -f "$CONF_FILE" ]; then
-  source "$CONF_FILE"
-fi
+set -e
+source "$HOME/macspoof/net-common.sh"
 
 echo ""
-echo "${plain_cyan}${plain_bold}============ CLEAN SPOOFER UTILITY ============${plain_reset}"
+echo "${C_CYAN}==================== MAC SPOOF COMMANDS ====================${C_RESET}"
 echo ""
-echo "  This will attempt to:"
-echo "    - Revert MAC to original (if config is present)"
-echo "    - Remove ${CONFIG_DIR}"
-echo "    - Remove spoof helper aliases from ~/.zshrc"
+echo "  ${C_GREEN}net:set${C_RESET}       - Apply your fixed spoof MAC"
+echo "  ${C_GREEN}net:random${C_RESET}    - Apply a random spoof MAC"
+echo "  ${C_GREEN}net:revert${C_RESET}    - Restore original hardware MAC"
+echo "  ${C_GREEN}net:show${C_RESET}      - Show current vs original MAC"
+echo "  ${C_GREEN}net:config${C_RESET}    - Reconfigure interface + fixed MAC (no changes applied yet)"
+echo "  ${C_GREEN}net:clean${C_RESET}     - Revert MAC and uninstall Mac Spoof Helper"
 echo ""
-read "ANS?Are you sure you want to remove everything? (y/N): "
+echo "  ${C_GREEN}net:help${C_RESET}      - Show this help menu"
+echo "  ${C_GREEN}spoofhelp${C_RESET}     - Same as net:help (shortcut)"
+echo ""
+echo "${C_CYAN}=============================================================${C_RESET}"
+echo ""
+
+echo "  Credits:"
+echo -n "    "
+rainbow_text "Discord: dimension53"
+echo ""
+EOF
+chmod +x "$MACSPOOF_DIR/net-help.sh"
+
+# net-clean.sh  → net:clean
+cat > "$MACSPOOF_DIR/net-clean.sh" <<'EOF'
+#!/bin/zsh
+set -e
+source "$HOME/macspoof/net-common.sh"
+
+echo ""
+echo "${C_RED}WARNING:${C_RESET} This will:"
+echo "  - Revert MAC (if config exists)"
+echo "  - Remove all net:* / spoofhelp commands"
+echo "  - Delete $MACSPOOF_DIR and config"
+echo ""
+read "ANS?Are you sure you want to continue? (y/n): "
 
 if [[ "$ANS" != "y" && "$ANS" != "Y" ]]; then
-  echo ""
-  echo "${plain_yellow}[ABORT]${plain_reset} Nothing was removed."
-  echo ""
+  echo "${C_YELLOW}Canceled. Nothing removed.${C_RESET}"
   exit 0
 fi
 
-# Try revert
-if [ -n "$IFACE" ] && [ -n "$ORIGINAL_MAC" ]; then
+# Try to revert MAC if we still have config
+if load_config; then
   echo ""
-  echo "${plain_cyan}Reverting MAC on $IFACE to $ORIGINAL_MAC (best effort)...${plain_reset}"
-  sudo ifconfig "$IFACE" up 2>/dev/null || true
-  sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC" 2>/dev/null || true
+  echo "Reverting MAC on ${C_GREEN}${IFACE}${C_RESET} to ${C_YELLOW}${ORIGINAL_MAC}${C_RESET} ..."
+  sudo ifconfig "$IFACE" up || true
+  sudo ifconfig "$IFACE" ether "$ORIGINAL_MAC" || true
 fi
 
-# Clean aliases from ~/.zshrc
-if [ -f "$HOME/.zshrc" ]; then
-  sed -i '' '/alias macfix=/d'       "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/alias macrandom=/d'    "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/alias macrevert=/d'    "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/alias macshow=/d'      "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/alias macShow=/d'      "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/alias spoofhelp=/d'    "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/alias cleanspoofer=/d' "$HOME/.zshrc" 2>/dev/null
-  sed -i '' '/Real MAC Spoof Helper Commands/d' "$HOME/.zshrc" 2>/dev/null
+# Remove alias block from ~/.zshrc
+if [[ -f "$HOME/.zshrc" ]]; then
+  sed -i '' '/# >>> Mac Spoof Helper (macspoof) >>>/,/# <<< Mac Spoof Helper (macspoof) <<</d' "$HOME/.zshrc"
 fi
 
-# Remove directory
-rm -rf "$CONFIG_DIR"
+# Delete dir
+rm -rf "$MACSPOOF_DIR"
 
 echo ""
-echo "${plain_green}[OK]${plain_reset} Spoof helper files removed."
-echo "    Open a new terminal, or run: source ~/.zshrc"
+echo "${C_GREEN}[OK]${C_RESET} Mac Spoof Helper removed."
+echo "Open a new terminal session or run: ${C_GREEN}source ~/.zshrc${C_RESET}"
 echo ""
 EOF
-chmod +x "$SCRIPTS_DIR/cleanspoofer.sh"
+chmod +x "$MACSPOOF_DIR/net-clean.sh"
 
-# ---------------- ADD ALIASES ----------------
-add_alias() {
-  local LINE="$1"
-  if [ -f "$HOME/.zshrc" ]; then
-    if ! grep -Fqx "$LINE" "$HOME/.zshrc" 2>/dev/null; then
-      echo "$LINE" >> "$HOME/.zshrc"
-    fi
-  else
-    echo "$LINE" >> "$HOME/.zshrc"
-  fi
-}
+# -------------------------------------------------------------------
+#  7. Add aliases to ~/.zshrc (within clear markers)
+# -------------------------------------------------------------------
+if [[ ! -f "$HOME/.zshrc" ]]; then
+  touch "$HOME/.zshrc"
+fi
 
-echo "" >> "$HOME/.zshrc"
-echo "# Real MAC Spoof Helper Commands" >> "$HOME/.zshrc"
-add_alias "alias macfix='$SCRIPTS_DIR/macfix.sh'"
-add_alias "alias macrandom='$SCRIPTS_DIR/macrandom.sh'"
-add_alias "alias macrevert='$SCRIPTS_DIR/macrevert.sh'"
-add_alias "alias macshow='$SCRIPTS_DIR/macshow.sh'"
-add_alias "alias macShow='$SCRIPTS_DIR/macshow.sh'"
-add_alias "alias spoofhelp='$SCRIPTS_DIR/spoofhelp.sh'"
-add_alias "alias cleanspoofer='$SCRIPTS_DIR/cleanspoofer.sh'"
+# Remove any old block first
+sed -i '' '/# >>> Mac Spoof Helper (macspoof) >>>/,/# <<< Mac Spoof Helper (macspoof) <<</d' "$HOME/.zshrc"
+
+cat >> "$HOME/.zshrc" <<EOF
+
+# >>> Mac Spoof Helper (macspoof) >>>
+alias 'net:set'="$MACSPOOF_DIR/net-set.sh"
+alias 'net:random'="$MACSPOOF_DIR/net-random.sh"
+alias 'net:revert'="$MACSPOOF_DIR/net-revert.sh"
+alias 'net:show'="$MACSPOOF_DIR/net-show.sh"
+alias 'net:config'="$MACSPOOF_DIR/net-config.sh"
+alias 'net:clean'="$MACSPOOF_DIR/net-clean.sh"
+alias spoofhelp="$MACSPOOF_DIR/net-help.sh"
+alias 'net:help'="$MACSPOOF_DIR/net-help.sh"
+# <<< Mac Spoof Helper (macspoof) <<<
+EOF
 
 echo ""
-echo "${plain_green}================ INSTALL COMPLETE ================${plain_reset}"
+echo "${C_GREEN}[OK]${C_RESET} Saved config to: ${CONFIG_FILE}"
+echo "${C_GREEN}[OK]${C_RESET} Installed scripts in: ${MACSPOOF_DIR}"
+echo ""
 echo "Now run:"
-echo "  ${plain_bold}source ~/.zshrc${plain_reset}"
-echo ""
+echo "  ${C_YELLOW}source ~/.zshrc${C_RESET}"
 echo "Then try:"
-echo "  ${plain_green}spoofhelp${plain_reset}"
+echo "  ${C_GREEN}net:help${C_RESET}   or   ${C_GREEN}spoofhelp${C_RESET}"
 echo ""
-echo "If you ever want to uninstall:"
-echo "  ${plain_green}cleanspoofer${plain_reset}"
-echo "=================================================="
+echo "${C_CYAN}=============================================================${C_RESET}"
 echo ""
