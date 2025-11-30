@@ -28,10 +28,11 @@ You may install this tool in one of three ways depending on how you downloaded i
 
 Paste this into Terminal:
 
-    ```sh
-curl -fsSL https://raw.githubusercontent.com/errorline21/Macbook-Network-Spoofer-test/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/errorline21/Macbook-Network-Spoofer-test/master/install.sh -o install.sh
 chmod +x install.sh
 ./install.sh
+
+
 
 ------------------------------------------------------------
 ✅ Option 2 — Installing from ZIP Download
