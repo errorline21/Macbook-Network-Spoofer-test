@@ -1,8 +1,23 @@
 # Macbook Network Spoofer — Easy Terminal Commands
 
+This tool works on **macOS only**.
+Wi-Fi (en0) spoofing is **blocked** by Apple on macOS Catalina and later.
+USB/Ethernet adapters **(en3, en4, etc.)** work perfectly.
+
+
+
 This tool provides a simple installer that adds helpful macOS network-related terminal commands into your system.  
 It is designed to be beginner-friendly and easy to set up.
 
+users will only be able to **spoof**:
+
+**USB** Ethernet adapters
+
+**USB-C** → Ethernet dongles
+
+**Thunderbolt** Ethernet adapters
+
+Virtual interfaces (sometimes)
 ------------------------------------------------------------
 📌 1. Installation Options
 ------------------------------------------------------------
